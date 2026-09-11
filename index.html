@@ -1,0 +1,1849 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sqlite-column-affinity-auditor</title>
+<meta name="description" content="Paste CREATE TABLE DDL and see the SQLite type affinity each column actually gets, which probe literals silently change type on insert, whether a STRICT table would accept the declared type, and which columns are true rowid aliases.">
+<link rel="canonical" href="https://0xelitesystem.github.io/sqlite-column-affinity-auditor/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="sqlite-column-affinity-auditor">
+<meta property="og:description" content="Paste CREATE TABLE DDL and see the SQLite type affinity each column actually gets, which literals silently change type on insert, and which columns are true rowid aliases.">
+<meta property="og:url" content="https://0xelitesystem.github.io/sqlite-column-affinity-auditor/">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"sqlite-column-affinity-auditor","applicationCategory":"DeveloperApplication","operatingSystem":"Any (browser)","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"url":"https://0xelitesystem.github.io/sqlite-column-affinity-auditor/","author":{"@type":"Person","name":"0xelitesystem","url":"https://elitesystem.ai"}}
+</script>
+<style>
+/* Palette verified by arithmetic (WCAG 2.x relative luminance), every text token
+   against every background token, in both themes. Ratios recorded per token below.
+   Light backgrounds: --bg #e8ebef, --panel #ffffff, --surface #f2f4f7
+   Dark  backgrounds: --bg #0a0a0a, --panel #161616, --surface #202020
+   Worst text pair anywhere: 5.46:1 (light --accent on --bg). AA normal text needs 4.5:1. */
+:root{
+  color-scheme: light;
+  --bg:#e8ebef;         /* page background */
+  --panel:#ffffff;      /* panel background */
+  --surface:#f2f4f7;    /* table head, code, mark background */
+  --ink:#12151a;        /* body text      15.30 bg / 18.29 panel / 16.60 surface */
+  --ink-soft:#3d4450;   /* secondary text  8.20 bg /  9.81 panel /  8.90 surface */
+  --accent:#2d6b00;     /* accent text     5.46 bg /  6.53 panel /  5.93 surface */
+  --link:#0b4fa8;       /* link, INTEGER   6.51 bg /  7.78 panel /  7.06 surface */
+  --warn:#7a4a00;       /* SURPRISING      6.26 bg /  7.48 panel /  6.79 surface */
+  --err:#8c1d18;        /* rejection       7.62 bg /  9.11 panel /  8.27 surface */
+  --numeric:#5b21b6;    /* NUMERIC token   7.51 bg /  8.98 panel /  8.15 surface */
+  --textaff:#0f5c4a;    /* TEXT affinity   6.63 bg /  7.92 panel /  7.19 surface */
+  --line:#c3c9d2;       /* decorative rule, not text, not a control boundary */
+  --line-strong:#6b7280;/* control boundary 4.04 bg / 4.83 panel / 4.39 surface, needs 3:1 */
+  --focus:#0b4fa8;      /* focus ring       6.51 bg / 7.78 panel / 7.06 surface, needs 3:1 */
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#0a0a0a; --panel:#161616; --surface:#202020;
+    --ink:#f5f7fa;        /* 18.45 bg / 16.86 panel / 15.18 surface */
+    --ink-soft:#b9bfc9;   /* 10.71 bg /  9.79 panel /  8.81 surface */
+    --accent:#d4ff3a;     /* 17.12 bg / 15.65 panel / 14.09 surface */
+    --link:#9fd0ff;       /* 12.20 bg / 11.15 panel / 10.04 surface */
+    --warn:#ffd166;       /* 13.73 bg / 12.55 panel / 11.30 surface */
+    --err:#ff9f9f;        /* 10.10 bg /  9.23 panel /  8.31 surface */
+    --numeric:#c9a3ff;    /*  9.58 bg /  8.76 panel /  7.89 surface */
+    --textaff:#7fe3c0;    /* 12.87 bg / 11.76 panel / 10.59 surface */
+    --line:#3a3a3a;
+    --line-strong:#767c86;/*  4.71 bg /  4.31 panel /  3.88 surface, needs 3:1 */
+    --focus:#9fd0ff;      /* 12.20 bg / 11.15 panel / 10.04 surface, needs 3:1 */
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0a0a0a; --panel:#161616; --surface:#202020;
+  --ink:#f5f7fa; --ink-soft:#b9bfc9; --accent:#d4ff3a; --link:#9fd0ff;
+  --warn:#ffd166; --err:#ff9f9f; --numeric:#c9a3ff; --textaff:#7fe3c0;
+  --line:#3a3a3a; --line-strong:#767c86; --focus:#9fd0ff;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:24px 16px 64px}
+header{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between}
+h1{font-size:1.5rem; margin:0 0 4px; letter-spacing:-.01em; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+.tagline{margin:0; color:var(--ink-soft); max-width:62ch}
+h2{font-size:1.05rem; margin:0 0 2px}
+h3{font-size:.95rem; margin:18px 0 6px}
+a{color:var(--link)}
+code, kbd, .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.9em}
+section.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  padding:14px 14px 16px; margin:16px 0;
+}
+.panel > p.note{margin:6px 0 12px; color:var(--ink-soft)}
+.hint{color:var(--ink-soft); font-size:.9rem; margin:4px 0 0}
+label{display:block; font-weight:600; margin:0 0 4px}
+textarea{
+  width:100%; background:var(--panel); color:var(--ink);
+  border:1px solid var(--line-strong); border-radius:8px; padding:10px;
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.9rem; line-height:1.5;
+  resize:vertical;
+}
+#ddl{min-height:110px}
+#probes{min-height:110px}
+.grid2{display:grid; grid-template-columns:1fr; gap:14px}
+@media (min-width:760px){ .grid2{grid-template-columns:3fr 2fr} }
+.controls{display:flex; flex-wrap:wrap; gap:10px; margin-top:12px}
+button{
+  min-height:36px; min-width:36px; padding:6px 14px; cursor:pointer;
+  background:var(--surface); color:var(--ink);
+  border:1px solid var(--line-strong); border-radius:8px;
+  font:inherit; font-size:.92rem; font-weight:600;
+}
+button:hover{border-color:var(--focus)}
+:focus-visible{outline:3px solid var(--focus); outline-offset:2px}
+.tablewrap{overflow-x:auto; margin-top:8px}
+table{border-collapse:collapse; width:100%; font-size:.88rem}
+caption{text-align:left; color:var(--ink-soft); padding:0 0 8px; font-size:.88rem}
+th, td{
+  border-bottom:1px solid var(--line); padding:6px 10px; text-align:left;
+  vertical-align:top; white-space:nowrap;
+}
+thead th{background:var(--surface); color:var(--ink); font-weight:700; border-bottom:2px solid var(--line-strong)}
+tbody tr.flagged{background:var(--surface)}
+td.wrapcell{white-space:normal; min-width:20ch}
+.aff{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700}
+.aff-INTEGER{color:var(--link)}
+.aff-NUMERIC{color:var(--numeric)}
+.aff-TEXT{color:var(--textaff)}
+.aff-REAL{color:var(--accent)}
+.aff-BLOB{color:var(--ink)}
+.cls-integer{color:var(--link)}
+.cls-real{color:var(--accent)}
+.cls-text{color:var(--textaff)}
+.flag{color:var(--warn); font-weight:700; white-space:nowrap}
+.flag .glyph{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+.no-flag{color:var(--ink-soft)}
+.bad{color:var(--err); font-weight:600}
+.good{color:var(--accent); font-weight:600}
+mark.hit{
+  background:var(--surface); color:var(--ink);
+  border:1px solid var(--line-strong); border-radius:3px;
+  padding:0 2px; text-decoration:underline; text-decoration-thickness:2px;
+}
+.calm{color:var(--ink-soft); margin:0}
+.errbox{border:2px solid var(--err); border-radius:8px; padding:10px 12px; margin:10px 0}
+.errbox p{margin:0 0 6px}
+.errbox p:last-child{margin:0}
+.errbox .title{color:var(--err); font-weight:700}
+pre.echo{
+  background:var(--surface); border:1px solid var(--line); border-radius:6px;
+  padding:8px 10px; overflow-x:auto; margin:6px 0 0; font-size:.85rem;
+}
+ul.rules{margin:6px 0 0; padding-left:20px}
+ul.rules li{margin:2px 0}
+dl.states{margin:8px 0 0}
+dl.states dt{font-weight:700; margin-top:8px}
+dl.states dd{margin:0 0 0 18px; color:var(--ink-soft)}
+footer{margin-top:28px; padding-top:14px; border-top:1px solid var(--line); color:var(--ink-soft); font-size:.9rem}
+footer p{margin:0 0 8px}
+.selftest-summary{font-weight:700}
+.sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>sqlite-column-affinity-auditor</h1>
+    <p class="tagline">Paste CREATE TABLE DDL from any dialect. See the type affinity SQLite actually assigns each column, which literals silently change storage class on insert, whether a STRICT table would accept the declared type, and which columns are true rowid aliases.</p>
+  </div>
+  <button id="theme" type="button" aria-pressed="false">Dark theme</button>
+</header>
+
+<section class="panel" aria-labelledby="inputs-h">
+  <h2 id="inputs-h">Input</h2>
+  <div class="grid2">
+    <div>
+      <label for="ddl">CREATE TABLE statements</label>
+      <textarea id="ddl" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+      <p class="hint">Any dialect. Comments and multiple statements are fine.</p>
+    </div>
+    <div>
+      <label for="probes">Probe literals, one per line</label>
+      <textarea id="probes" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+      <p class="hint">Each line is inserted as a text value. An empty line is a legitimate probe, the empty string.</p>
+    </div>
+  </div>
+  <div class="controls">
+    <button id="reset" type="button">Reset to example</button>
+    <button id="selftest" type="button">Run self test</button>
+  </div>
+</section>
+
+<div id="results" aria-live="polite" aria-atomic="false"></div>
+
+<section class="panel" id="selftest-panel" hidden aria-labelledby="selftest-h">
+  <h2 id="selftest-h">Self test</h2>
+  <div id="selftest-out"></div>
+</section>
+
+<footer>
+  <p><strong>Independent and unaffiliated.</strong> This page is not affiliated with, endorsed by, or connected to SQLite or the SQLite Consortium. SQLite is named here only as the subject being analysed.</p>
+  <p>The five affinity rules are reimplemented from the published SQLite datatypes specification, section 3.1 "Determination Of Column Affinity". No SQLite code is reproduced here. The behaviour encoded in the self test fixtures was measured against SQLite 3.50.4.</p>
+  <p>Everything runs in your browser. Nothing you paste leaves your machine. Single file, no network, no storage, no analytics. MIT licensed. <a href="https://github.com/0xelitesystem/sqlite-column-affinity-auditor">Source</a> from <a href="https://elitesystem.ai">elitesystem.ai</a>.</p>
+</footer>
+
+</div>
+
+<script>
+(function (global) {
+'use strict';
+
+/* ------------------------------------------------------------------ *
+ * 1. Pure logic. No DOM in this block, so it is testable in isolation.
+ * ------------------------------------------------------------------ */
+
+var MAX_INPUT = 200000;      /* characters of DDL accepted */
+var MAX_COLUMNS = 500;       /* columns rendered per run */
+var MAX_PROBES = 200;        /* probe literals rendered per run */
+
+var WS = '\t\n\x0B\f\r ';  /* the six ASCII characters SQLite treats as whitespace */
+
+function asciiTrim(s) {
+  var a = 0, b = s.length;
+  while (a < b && WS.indexOf(s.charAt(a)) >= 0) a++;
+  while (b > a && WS.indexOf(s.charAt(b - 1)) >= 0) b--;
+  return s.slice(a, b);
+}
+
+/* SQLite folds case for the 26 ASCII letters only. JavaScript's toUpperCase
+   also turns a dotless i into I and the fl ligature into FL, which SQLite
+   never does, and it can change the length of a string. Measured on 3.50.4:
+   a column declared with a dotless i in place of the i of INT gets NUMERIC
+   affinity, and STRICT rejects that name. */
+function asciiUpper(s) {
+  return String(s).replace(/[a-z]/g, function (ch) { return ch.toUpperCase(); });
+}
+
+/* ---- Affinity: the five ordered rules, as an explicit if / else-if chain.
+   Order is the whole point of the algorithm, so it is never a lookup map. */
+function affinityOf(declared) {
+  var u = asciiUpper(declared);
+  var i;
+  i = u.indexOf('INT');
+  if (i >= 0) return { aff: 'INTEGER', rule: 1, matched: 'INT', index: i };
+  i = u.indexOf('CHAR');
+  if (i >= 0) return { aff: 'TEXT', rule: 2, matched: 'CHAR', index: i };
+  i = u.indexOf('CLOB');
+  if (i >= 0) return { aff: 'TEXT', rule: 2, matched: 'CLOB', index: i };
+  i = u.indexOf('TEXT');
+  if (i >= 0) return { aff: 'TEXT', rule: 2, matched: 'TEXT', index: i };
+  i = u.indexOf('BLOB');
+  if (i >= 0) return { aff: 'BLOB', rule: 3, matched: 'BLOB', index: i };
+  if (asciiTrim(u) === '') return { aff: 'BLOB', rule: 3, matched: 'no type specified', index: -1 };
+  i = u.indexOf('REAL');
+  if (i >= 0) return { aff: 'REAL', rule: 4, matched: 'REAL', index: i };
+  i = u.indexOf('FLOA');
+  if (i >= 0) return { aff: 'REAL', rule: 4, matched: 'FLOA', index: i };
+  i = u.indexOf('DOUB');
+  if (i >= 0) return { aff: 'REAL', rule: 4, matched: 'DOUB', index: i };
+  return { aff: 'NUMERIC', rule: 5, matched: 'no substring matched', index: -1 };
+}
+
+/* Rule 2 matches CHAR before CLOB before TEXT only in the sense that all three
+   yield TEXT. The tie order above is cosmetic and affects only which substring
+   is reported, never the affinity. */
+
+/* ---- How SQLite reads a declared type before any rule sees it, following
+   sqlite3AddColumn in src/build.c of 3.50.4. A type of three or more
+   characters whose first character is a quote (" ' ` or [) and which holds no
+   other quote character strictly inside loses its first and last character.
+   What is left is compared, in any letter case, against the six standard
+   names. The text the five rules scan is then dequoted once more, so a type
+   that still opens with a quote keeps only its first quoted run. Measured on
+   3.50.4: k "INTEGER" PRIMARY KEY is the rowid, "TEXT" INT gets TEXT affinity,
+   and [x] INT gets NUMERIC affinity because the T is dropped with the last
+   character. map[j] is the index in the declared type of character j of the
+   scanned text, so a highlight still lands on the right characters. */
+var QUOTE_CHARS = '"\'[`';
+function typeReading(declared) {
+  var s = String(declared), a = 0, b = s.length, i, inner, q;
+  while (a < b && WS.indexOf(s.charAt(a)) >= 0) a++;
+  while (b > a && WS.indexOf(s.charAt(b - 1)) >= 0) b--;
+  if (a === b) return { empty: true, std: null, text: '', map: [] };
+  if (b - a >= 3 && QUOTE_CHARS.indexOf(s.charAt(a)) >= 0) {
+    inner = true;
+    for (i = a + 1; i < b - 1; i++) {
+      if (QUOTE_CHARS.indexOf(s.charAt(i)) >= 0) { inner = false; break; }
+    }
+    if (inner) { a++; b--; }
+  }
+  var tok = asciiUpper(s.slice(a, b)), std = null;
+  for (i = 0; i < STRICT_TYPES.length; i++) {
+    if (tok === STRICT_TYPES[i]) { std = STRICT_TYPES[i]; break; }
+  }
+  var text = '', map = [];
+  q = s.charAt(a);
+  if (QUOTE_CHARS.indexOf(q) >= 0) {
+    if (q === '[') q = ']';
+    for (i = a + 1; i < b; i++) {
+      if (s.charAt(i) === q) {
+        if (i + 1 < b && s.charAt(i + 1) === q) { text += q; map.push(i); i++; continue; }
+        break;
+      }
+      text += s.charAt(i); map.push(i);
+    }
+  } else {
+    for (i = a; i < b; i++) { text += s.charAt(i); map.push(i); }
+  }
+  return { empty: false, std: std, text: text, map: map };
+}
+
+/* The affinity a column actually gets: the five-rule chain above, run on the
+   text SQLite scans. A declared type that is present but reads as nothing
+   ("" or " ") is not "no type specified", so it falls to NUMERIC. */
+function columnAffinity(declared) {
+  var rd = typeReading(declared);
+  if (rd.empty) return affinityOf('');
+  var r = affinityOf(rd.text);
+  if (r.rule === 3 && r.index < 0) return { aff: 'NUMERIC', rule: 5, matched: 'no substring matched', index: -1 };
+  if (r.index >= 0) r.index = rd.map[r.index];
+  return r;
+}
+
+/* ---- Insert simulation.
+   Well-formedness is decided by explicit regular expressions on the trimmed
+   string. Number() is never asked to decide: Number('') is 0, Number(' ') is 0
+   and Number('0x1A') is 26, none of which is how SQLite reads those strings. */
+var INT_RE = /^[+-]?[0-9]+$/;
+var REAL_RE = /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/;
+var I64_MAX_DIGITS = '9223372036854775807';
+var I64_MIN_DIGITS = '9223372036854775808';
+var TWO63 = 9223372036854775808;
+
+function normaliseInt(s) {
+  var neg = false, t = s;
+  if (t.charAt(0) === '+' || t.charAt(0) === '-') { neg = t.charAt(0) === '-'; t = t.slice(1); }
+  t = t.replace(/^0+/, '');
+  if (t === '') { t = '0'; neg = false; }
+  return { neg: neg, digits: t, text: (neg ? '-' : '') + t };
+}
+
+/* Range is checked on the DIGIT STRING, never on the double, because
+   Number('9223372036854775807') has already lost the last digits. */
+function fitsInt64(s) {
+  var n = normaliseInt(s);
+  var cap = n.neg ? I64_MIN_DIGITS : I64_MAX_DIGITS;
+  if (n.digits.length !== cap.length) return n.digits.length < cap.length;
+  return n.digits <= cap;
+}
+
+/* Real values are shown as the shortest decimal that round-trips to the same
+   IEEE 754 binary64 value, with an explicit .0 on small whole numbers so a real
+   is never mistaken for an integer. */
+function formatReal(v) {
+  if (!isFinite(v)) return v > 0 ? 'Infinity' : '-Infinity';
+  if (v === Math.floor(v) && Math.abs(v) < 1e15) return v.toFixed(1);
+  if (Math.abs(v) >= 1e15) return v.toExponential();
+  return String(v);
+}
+
+function simulate(aff, literal) {
+  var s = asciiTrim(literal);
+  /* TEXT and BLOB affinity: no conversion at all. */
+  if (aff === 'TEXT' || aff === 'BLOB') return { cls: 'text', text: literal };
+  var isInt = INT_RE.test(s);
+  var isReal = REAL_RE.test(s);
+  if (!isInt && !isReal) return { cls: 'text', text: literal };
+  if (aff === 'REAL') return { cls: 'real', text: formatReal(Number(s)) };
+  /* INTEGER affinity and NUMERIC affinity share one code path with no branch
+     between them, because on insert they behave identically. */
+  if (isInt) {
+    if (fitsInt64(s)) return { cls: 'integer', text: normaliseInt(s).text };
+    /* A well-formed integer literal too large for signed 64 bits becomes REAL. */
+    return { cls: 'real', text: formatReal(Number(s)) };
+  }
+  var d = Number(s);
+  /* Both ends are exclusive. sqlite3VdbeIntegerAffinity in 3.50.4 keeps a
+     real only when it is neither the largest nor the smallest int64, so
+     '-9223372036854775808.0' stays real, measured on 3.50.4. */
+  if (isFinite(d) && d === Math.floor(d) && d < TWO63 && d > -TWO63) {
+    return { cls: 'integer', text: BigInt(d).toString() };
+  }
+  return { cls: 'real', text: formatReal(d) };
+}
+
+/* ---- STRICT: exact name match against six hardcoded names.
+   Measured, not guessed: attempting CREATE TABLE s(x TYPE) STRICT on SQLite
+   3.50.4 over 17 type names accepted exactly these six and rejected the rest. */
+var STRICT_TYPES = ['INT', 'INTEGER', 'REAL', 'TEXT', 'BLOB', 'ANY'];
+
+function strictVerdict(declared, tableName, columnName) {
+  var rd = typeReading(declared);
+  if (rd.std) return { accepted: true, message: 'accepted' };
+  var where = (tableName || 's') + '.' + (columnName || 'x');
+  /* A column with no declared type at all gets a different refusal from the
+     engine. Measured on 3.50.4: CREATE TABLE users(email) STRICT reports
+     `missing datatype for users.email`, not the unknown-datatype form. */
+  if (rd.empty) return { accepted: false, message: 'missing datatype for ' + where };
+  /* The engine quotes the dequoted text it scanned, measured on 3.50.4:
+     "INTEGER" UNSIGNED is reported as "INTEGER". */
+  return { accepted: false, message: 'unknown datatype for ' + where + ': "' + rd.text + '"' };
+}
+
+/* ---- Rowid alias: the declared type must be exactly INTEGER, the column must
+   be a PRIMARY KEY, and the table must not be WITHOUT ROWID. A composite
+   PRIMARY KEY is never an alias, and neither is a column definition whose
+   PRIMARY KEY clause carries DESC. */
+function rowidVerdict(col, table) {
+  if (!col.isPrimaryKey) return { state: 'not-pk', label: 'not a primary key', detail: '' };
+  var exact = typeReading(col.declaredType).std === 'INTEGER';
+  var strict = !!(table && table.strictTable);
+  if (table && table.withoutRowid) {
+    return {
+      state: 'no-alias',
+      label: 'PRIMARY KEY, not a rowid alias',
+      detail: 'The table is WITHOUT ROWID, so there is no rowid for any column to alias.'
+    };
+  }
+  if (col.pkComposite) {
+    return {
+      state: 'no-alias',
+      label: 'PRIMARY KEY, not a rowid alias',
+      detail: 'The PRIMARY KEY covers more than one column, so it cannot be a rowid alias.'
+    };
+  }
+  if (col.pkDesc && strict) {
+    return {
+      state: 'no-alias',
+      label: 'PRIMARY KEY, not a rowid alias',
+      detail: 'The column definition ends in PRIMARY KEY DESC, and SQLite does not make that column the rowid. The table is STRICT, so this column still refuses any value its declared type cannot hold. Measured on 3.50.4: in CREATE TABLE r(k INTEGER PRIMARY KEY DESC, v TEXT) STRICT, INSERT INTO r VALUES(\'abc\',\'z\') fails with "cannot store TEXT value in INTEGER column r.k", and inserting k = 5 leaves rowid at 1.'
+    };
+  }
+  if (col.pkDesc) {
+    return {
+      state: 'no-alias',
+      label: 'PRIMARY KEY, not a rowid alias',
+      detail: 'The column definition ends in PRIMARY KEY DESC, and SQLite does not make that column the rowid. Measured on 3.50.4: with DESC, INSERT INTO r VALUES(\'abc\',\'z\') is accepted and k holds the text abc, and AUTOINCREMENT on the same column is refused with "AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY". Write it as PRIMARY KEY, as PRIMARY KEY ASC, or as a table level PRIMARY KEY(k DESC), and the same column IS the rowid.'
+    };
+  }
+  if (exact) {
+    return {
+      state: 'alias',
+      label: 'IS a rowid alias',
+      detail: 'This column is the rowid. A non-integer value is rejected outright with "datatype mismatch" rather than stored as text.'
+    };
+  }
+  if (strict) {
+    return {
+      state: 'no-alias',
+      label: 'PRIMARY KEY, not a rowid alias',
+      detail: 'The declared type is not exactly INTEGER, so the table keeps a separate hidden rowid. The table is STRICT, so this column still refuses any value its declared type cannot hold. Measured on 3.50.4: in CREATE TABLE r(k INT PRIMARY KEY, v TEXT) STRICT, INSERT INTO r VALUES(\'abc\',\'z\') fails with "cannot store TEXT value in INT column r.k".'
+    };
+  }
+  return {
+    state: 'no-alias',
+    label: 'PRIMARY KEY, not a rowid alias',
+    detail: 'The declared type is not exactly INTEGER, so the table keeps a separate hidden rowid and this column accepts a text value like abc.'
+  };
+}
+
+/* ---- SURPRISING flag. Three mechanical tests, all printed on the page.
+   Nothing here guesses at intent: each clause is a string test. */
+var AFFINITY_NAMES = ['INTEGER', 'TEXT', 'BLOB', 'REAL', 'NUMERIC'];
+/* The rule 1 typenames listed in section 3.1.1 of the SQLite datatypes
+   specification, plus INT which "UNSIGNED BIG INT" contributes as a word. */
+var INT_FAMILY_WORDS = ['INT', 'INTEGER', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'BIGINT', 'INT2', 'INT8'];
+var LOWER_RULE_SUBSTRINGS = {
+  1: ['CHAR', 'CLOB', 'TEXT', 'BLOB', 'REAL', 'FLOA', 'DOUB'],
+  2: ['BLOB', 'REAL', 'FLOA', 'DOUB'],
+  3: ['REAL', 'FLOA', 'DOUB'],
+  4: [],
+  5: []
+};
+
+function stripArgs(declared) {
+  return asciiUpper(asciiTrim(String(declared).replace(/\([^()]*\)/g, ' ').replace(/\s+/g, ' ')));
+}
+
+function surprisingVerdict(declared, info, strictAny) {
+  var bare = stripArgs(declared);
+  var reasons = [];
+  if (AFFINITY_NAMES.indexOf(bare) >= 0) return { flagged: false, reasons: reasons };
+  var u = asciiUpper(declared);
+
+  var lower = LOWER_RULE_SUBSTRINGS[info.rule] || [];
+  var preempted = [];
+  for (var i = 0; i < lower.length; i++) {
+    if (u.indexOf(lower[i]) >= 0 && preempted.indexOf(lower[i]) < 0) preempted.push(lower[i]);
+  }
+  if (preempted.length) {
+    reasons.push('rule ' + info.rule + ' fired first and preempted a later rule that also matches here (' + preempted.join(', ') + ')');
+  }
+
+  if (info.rule === 5) {
+    /* An ANY column in a STRICT table converts nothing, measured on 3.50.4,
+       so the ordinary-table sentence would be false there. */
+    reasons.push(strictAny
+      ? 'no documented substring matched, which means NUMERIC in an ordinary table, but an ANY column in a STRICT table converts nothing'
+      : 'no documented substring matched, so the column falls through to NUMERIC and text is silently converted');
+  }
+
+  if (info.rule === 1) {
+    var words = bare.split(/[^A-Z0-9_]+/);
+    var known = false;
+    for (var j = 0; j < words.length; j++) {
+      if (INT_FAMILY_WORDS.indexOf(words[j]) >= 0) { known = true; break; }
+    }
+    if (!known) reasons.push('INTEGER affinity comes from an "INT" inside a name that is not an integer typename');
+  }
+
+  return { flagged: reasons.length > 0, reasons: reasons };
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. Parser. Fails closed with a named refusal, never silently drops.
+ * ------------------------------------------------------------------ */
+
+var TYPE_STOP_WORDS = ['CONSTRAINT', 'PRIMARY', 'NOT', 'NULL', 'UNIQUE', 'CHECK',
+  'DEFAULT', 'COLLATE', 'REFERENCES', 'GENERATED', 'AS', 'AUTOINCREMENT',
+  /* MySQL spellings that also terminate a declared type */
+  'AUTO_INCREMENT', 'COMMENT'];
+
+function ParseError(message) { this.name = 'ParseError'; this.message = message; }
+
+/* Remove -- line comments and block comments while preserving string literals
+   and quoted identifiers, so a -- inside quotes survives. */
+function stripComments(src) {
+  var out = '', i = 0, n = src.length, c, q;
+  while (i < n) {
+    c = src.charAt(i);
+    if (c === "'" || c === '"' || c === '`') {
+      q = c; out += c; i++;
+      while (i < n) {
+        if (src.charAt(i) === q) {
+          if (src.charAt(i + 1) === q) { out += q + q; i += 2; continue; }
+          out += q; i++; break;
+        }
+        out += src.charAt(i); i++;
+      }
+      continue;
+    }
+    if (c === '[') {
+      out += c; i++;
+      while (i < n && src.charAt(i) !== ']') { out += src.charAt(i); i++; }
+      if (i < n) { out += ']'; i++; }
+      continue;
+    }
+    if (c === '-' && src.charAt(i + 1) === '-') {
+      while (i < n && src.charAt(i) !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && src.charAt(i + 1) === '*') {
+      i += 2;
+      while (i < n && !(src.charAt(i) === '*' && src.charAt(i + 1) === '/')) i++;
+      i = i < n ? i + 2 : n;
+      out += ' ';
+      continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+/* Replaces every 'string literal' (with '' escapes) and every "quoted",
+   `backticked` or [bracketed] identifier with spaces of the same length, so
+   the constraint regexes see keywords only as tokens. Measured on 3.50.4:
+   k INTEGER DEFAULT 'primary key' is not a primary key (table_info pk 0) and
+   accepts the text 'abc'. The length is kept so an index found in the blanked
+   string still points at the same characters in the original. */
+function blankQuoted(s) {
+  var out = '', i = 0, n = s.length, c, q, start;
+  while (i < n) {
+    c = s.charAt(i);
+    if (c === "'" || c === '"' || c === '`' || c === '[') {
+      q = c === '[' ? ']' : c; start = i; i++;
+      while (i < n) {
+        if (s.charAt(i) === q) {
+          if (q !== ']' && s.charAt(i + 1) === q) { i += 2; continue; }
+          i++; break;
+        }
+        i++;
+      }
+      out += new Array(i - start + 1).join(' ');
+      continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+function skipWs(s, i) {
+  while (i < s.length && WS.indexOf(s.charAt(i)) >= 0) i++;
+  return i;
+}
+
+/* Reads one identifier: "double quoted", [bracketed], `backticked`, or bare.
+   Returns the unquoted text and the index just past it. */
+function readIdent(s, i) {
+  i = skipWs(s, i);
+  var n = s.length, c = s.charAt(i), out = '', q;
+  if (c === '"' || c === '`') {
+    q = c; i++;
+    while (i < n) {
+      if (s.charAt(i) === q) {
+        if (s.charAt(i + 1) === q) { out += q; i += 2; continue; }
+        i++; break;
+      }
+      out += s.charAt(i); i++;
+    }
+    return { name: out, next: i };
+  }
+  if (c === '[') {
+    i++;
+    while (i < n && s.charAt(i) !== ']') { out += s.charAt(i); i++; }
+    if (i < n) i++;
+    return { name: out, next: i };
+  }
+  while (i < n && /[A-Za-z0-9_$\u0080-\uFFFF]/.test(s.charAt(i))) { out += s.charAt(i); i++; }
+  return { name: out, next: i };
+}
+
+/* Finds the index just past the ) that closes the ( at index i.
+   Throws a named refusal rather than guessing when the input is unbalanced. */
+function matchParen(s, i) {
+  var depth = 0, n = s.length, c, q;
+  while (i < n) {
+    c = s.charAt(i);
+    if (c === "'" || c === '"' || c === '`') {
+      q = c; i++;
+      while (i < n) {
+        if (s.charAt(i) === q) {
+          if (s.charAt(i + 1) === q) { i += 2; continue; }
+          i++; break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === '[') { while (i < n && s.charAt(i) !== ']') i++; i++; continue; }
+    if (c === '(') { depth++; i++; continue; }
+    if (c === ')') { depth--; i++; if (depth === 0) return i; continue; }
+    i++;
+  }
+  throw new ParseError('unbalanced parentheses');
+}
+
+/* Splits a column list on commas at parenthesis depth zero only, so
+   DECIMAL(10,2), VARCHAR(255) and ENUM('a','b') are never split. */
+function splitTopLevel(body) {
+  var parts = [], cur = '', depth = 0, i = 0, n = body.length, c, q;
+  while (i < n) {
+    c = body.charAt(i);
+    if (c === "'" || c === '"' || c === '`') {
+      q = c; cur += c; i++;
+      while (i < n) {
+        if (body.charAt(i) === q) {
+          if (body.charAt(i + 1) === q) { cur += q + q; i += 2; continue; }
+          cur += q; i++; break;
+        }
+        cur += body.charAt(i); i++;
+      }
+      continue;
+    }
+    if (c === '[') { while (i < n && body.charAt(i) !== ']') { cur += body.charAt(i); i++; } cur += ']'; i++; continue; }
+    if (c === '(') { depth++; cur += c; i++; continue; }
+    if (c === ')') { depth--; cur += c; i++; continue; }
+    if (c === ',' && depth === 0) { parts.push(cur); cur = ''; i++; continue; }
+    cur += c; i++;
+  }
+  parts.push(cur);
+  return parts;
+}
+
+/* Reads the declared type: every token after the column name up to the first
+   constraint keyword at depth zero. A type may be several words, so this never
+   stops at the first space. */
+function readDeclaredType(s) {
+  var i = 0, n = s.length, startedAt = -1, endedAt = 0, j, k, w, c, d;
+  while (i < n) {
+    j = skipWs(s, i);
+    if (j >= n) break;
+    c = s.charAt(j);
+    if (c === ',' || c === ')') break;
+    if (c === '(') {
+      d = 0; k = j;
+      while (k < n) {
+        if (s.charAt(k) === '(') d++;
+        else if (s.charAt(k) === ')') { d--; if (d === 0) { k++; break; } }
+        k++;
+      }
+      if (d !== 0) throw new ParseError('unbalanced parentheses inside a type argument');
+      if (startedAt < 0) startedAt = j;
+      endedAt = k; i = k; continue;
+    }
+    if (c === '"' || c === '`' || c === '[') {
+      var q = c === '[' ? ']' : c;
+      k = j + 1;
+      while (k < n && s.charAt(k) !== q) k++;
+      k = k < n ? k + 1 : n;
+      if (startedAt < 0) startedAt = j;
+      endedAt = k; i = k; continue;
+    }
+    k = j;
+    while (k < n && !/[\s(),]/.test(s.charAt(k))) k++;
+    w = s.slice(j, k);
+    if (TYPE_STOP_WORDS.indexOf(asciiUpper(w)) >= 0) break;
+    if (startedAt < 0) startedAt = j;
+    endedAt = k; i = k;
+  }
+  if (startedAt < 0) return { type: '', rest: s };
+  return { type: s.slice(startedAt, endedAt), rest: s.slice(endedAt) };
+}
+
+var CONSTRAINT_FIRST_WORDS = ['PRIMARY', 'UNIQUE', 'CHECK', 'FOREIGN', 'CONSTRAINT'];
+
+/* ---- MySQL bare index clauses. mysqldump writes KEY, INDEX, FULLTEXT KEY and
+   SPATIAL KEY as table level items with no leading UNIQUE or CONSTRAINT, and
+   they are not columns. They cannot just be appended to the list above, because
+   KEY is a legal unquoted column name in SQLite: CREATE TABLE s(key TEXT
+   PRIMARY KEY, value TEXT) is a common key value table and the column must
+   survive. So this matches on SHAPE instead: the KEY or INDEX word, an optional
+   index name, an optional USING clause, then a parenthesised list whose items
+   all read as column references. A type argument list such as (64), (10,2) or
+   ('a','b') never does, so key VARCHAR(64) stays a column. */
+var INDEX_FIRST_WORDS = ['KEY', 'INDEX', 'FULLTEXT', 'SPATIAL'];
+var INDEX_NAME_SRC = '(?:`[^`]*`|"[^"]*"|\\[[^\\]]*\\]|[A-Za-z_][A-Za-z0-9_$]*)';
+var INDEX_HEAD_RE = new RegExp(
+  '^(?:(?:FULLTEXT|SPATIAL)\\s+)?(?:KEY|INDEX)\\s*(' + INDEX_NAME_SRC +
+  '\\s*)?(?:USING\\s+(?:BTREE|HASH|RTREE)\\s*)?\\(', 'i');
+/* A quoted index name settles it on its own: a declared type is never quoted,
+   so "KEY `idx` (...)" cannot be a column definition however odd the key parts
+   are. That is what lets a functional index such as KEY `x` (LOWER(a)) through
+   without loosening the test for the unquoted case. */
+var QUOTED_NAME_RE = /^[`"\[]/;
+var COLUMN_REF_RE = new RegExp(
+  '^' + INDEX_NAME_SRC + '(?:\\s*\\(\\s*[0-9]+\\s*\\))?(?:\\s+(?:ASC|DESC))?$', 'i');
+
+function isIndexClause(trimmed) {
+  var head = INDEX_HEAD_RE.exec(trimmed);
+  if (!head) return false;
+  var open = head[0].length - 1;
+  var close;
+  try { close = matchParen(trimmed, open); } catch (e) { return false; }
+  if (head[1] && QUOTED_NAME_RE.test(asciiTrim(head[1]))) return true;
+  var inner = splitTopLevel(trimmed.slice(open + 1, close - 1));
+  if (!inner.length) return false;
+  for (var i = 0; i < inner.length; i++) {
+    if (!COLUMN_REF_RE.test(asciiTrim(inner[i]))) return false;
+  }
+  return true;
+}
+
+function parseDDL(src) {
+  var result = { tables: [], errors: [] };
+  if (src.length > MAX_INPUT) {
+    result.errors.push({
+      title: 'Input refused',
+      body: 'The DDL box holds ' + src.length + ' characters and this page reads at most ' + MAX_INPUT + '. Paste a smaller schema.'
+    });
+    return result;
+  }
+  var s = stripComments(src);
+  var re = /\bCREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/gi;
+  var m, guard = 0;
+  while ((m = re.exec(s)) !== null) {
+    if (++guard > 2000) break;
+    var pos = m.index + m[0].length;
+    var table = { name: '', columns: [], withoutRowid: false, strictTable: false, error: null };
+    try {
+      var id = readIdent(s, pos);
+      var name = id.name;
+      var after = skipWs(s, id.next);
+      if (s.charAt(after) === '.') {
+        var id2 = readIdent(s, after + 1);
+        name = id2.name;
+        after = skipWs(s, id2.next);
+      }
+      table.name = name || '(unnamed)';
+      if (s.charAt(after) !== '(') {
+        throw new ParseError('no column list follows the table name. CREATE TABLE ... AS SELECT takes its column types from the SELECT, so there is no declared type to read here.');
+      }
+      var close = matchParen(s, after);
+      var body = s.slice(after + 1, close - 1);
+      var optEnd = s.indexOf(';', close);
+      var opts = s.slice(close, optEnd < 0 ? s.length : optEnd);
+      var nextCreate = opts.search(/\bCREATE\b/i);
+      if (nextCreate >= 0) opts = opts.slice(0, nextCreate);
+      table.withoutRowid = /\bWITHOUT\s+ROWID\b/i.test(opts);
+      table.strictTable = /\bSTRICT\b/i.test(opts);
+
+      var items = splitTopLevel(body);
+      var tablePK = [];
+      var i, raw, trimmed, first, firstWord, rest, idres, typeres, restTokens, col;
+      for (i = 0; i < items.length; i++) {
+        raw = items[i];
+        trimmed = asciiTrim(raw);
+        if (trimmed === '') continue;
+        first = readIdent(trimmed, 0);
+        firstWord = asciiUpper(first.name);
+        if (trimmed.charAt(0) !== '"' && trimmed.charAt(0) !== '[' && trimmed.charAt(0) !== '`' &&
+            (CONSTRAINT_FIRST_WORDS.indexOf(firstWord) >= 0 ||
+             (INDEX_FIRST_WORDS.indexOf(firstWord) >= 0 && isIndexClause(trimmed)))) {
+          var pkm = /\bPRIMARY\s+KEY\s*\(([^)]*)\)/i.exec(blankQuoted(trimmed));
+          if (pkm) {
+            /* Matched on the blanked copy, names read from the original at
+               the same offsets, so PRIMARY KEY (`id`) keeps its quoted name. */
+            var cols = splitTopLevel(trimmed.substr(pkm.index + pkm[0].length - 1 - pkm[1].length, pkm[1].length));
+            var namesInPk = [];
+            for (var p = 0; p < cols.length; p++) {
+              var pk = readIdent(asciiTrim(cols[p]), 0);
+              if (pk.name) namesInPk.push(pk.name);
+            }
+            if (namesInPk.length) tablePK.push(namesInPk);
+          }
+          continue;
+        }
+        if (!first.name) {
+          table.columns.push({
+            name: '', declaredType: '', raw: trimmed, unparsed: true,
+            isPrimaryKey: false, pkDesc: false, pkComposite: false
+          });
+          continue;
+        }
+        rest = trimmed.slice(first.next);
+        typeres = readDeclaredType(rest);
+        restTokens = blankQuoted(typeres.rest);
+        col = {
+          name: first.name,
+          declaredType: asciiTrim(typeres.type),
+          raw: trimmed,
+          unparsed: false,
+          isPrimaryKey: /\bPRIMARY\s+KEY\b/i.test(restTokens),
+          /* Column definition form only. A table level PRIMARY KEY(k DESC)
+             IS still a rowid alias, measured on 3.50.4, so that path must
+             never set this flag. */
+          pkDesc: /\bPRIMARY\s+KEY\s+DESC\b/i.test(restTokens),
+          pkComposite: false
+        };
+        table.columns.push(col);
+        if (table.columns.length >= MAX_COLUMNS) break;
+      }
+      for (i = 0; i < tablePK.length; i++) {
+        for (var q2 = 0; q2 < tablePK[i].length; q2++) {
+          for (var r2 = 0; r2 < table.columns.length; r2++) {
+            if (table.columns[r2].name === tablePK[i][q2]) {
+              table.columns[r2].isPrimaryKey = true;
+              if (tablePK[i].length > 1) table.columns[r2].pkComposite = true;
+            }
+          }
+        }
+      }
+      re.lastIndex = close;
+    } catch (e) {
+      table.error = {
+        title: 'Could not parse the column list, check for an unclosed parenthesis or quote',
+        body: (e && e.message) ? e.message : String(e),
+        echo: s.slice(m.index, m.index + 120)
+      };
+    }
+    result.tables.push(table);
+  }
+  return result;
+}
+
+function analyse(ddlText, probeText) {
+  var parsed = parseDDL(ddlText);
+  var i, j, t, c;
+  for (i = 0; i < parsed.tables.length; i++) {
+    t = parsed.tables[i];
+    for (j = 0; j < t.columns.length; j++) {
+      c = t.columns[j];
+      if (c.unparsed) continue;
+      c.affinity = columnAffinity(c.declaredType);
+      /* In a STRICT table an ANY column gets no affinity at all: 3.50.4 sets
+         it to BLOB in sqlite3EndTable, and '0123' stays text, measured. */
+      c.strictAny = !!t.strictTable && typeReading(c.declaredType).std === 'ANY';
+      c.surprising = surprisingVerdict(c.declaredType, c.affinity, c.strictAny);
+      c.strict = strictVerdict(c.declaredType, t.name, c.name);
+      c.rowid = rowidVerdict(c, t);
+    }
+  }
+  parsed.probes = splitProbes(probeText);
+  return parsed;
+}
+
+function splitProbes(text) {
+  if (text === '') return [];
+  var lines = text.split('\n');
+  if (lines.length && lines[lines.length - 1] === '' ) lines.pop();
+  if (lines.length > MAX_PROBES) lines = lines.slice(0, MAX_PROBES);
+  return lines;
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Self test. Fixtures were measured against SQLite 3.50.4.
+ * ------------------------------------------------------------------ */
+
+/* [declared type, affinity, rule, matched substring] */
+var AFFINITY_FIXTURES = [
+  ['INTEGER', 'INTEGER', 1, 'INT'],
+  ['INT', 'INTEGER', 1, 'INT'],
+  ['TINYINT(1)', 'INTEGER', 1, 'INT'],
+  ['BIGINT(20)', 'INTEGER', 1, 'INT'],
+  ['MEDIUMINT', 'INTEGER', 1, 'INT'],
+  ['INT UNSIGNED', 'INTEGER', 1, 'INT'],
+  ['UNSIGNED BIG INT', 'INTEGER', 1, 'INT'],
+  ['INT2', 'INTEGER', 1, 'INT'],
+  ['INT8', 'INTEGER', 1, 'INT'],
+  ['POINT', 'INTEGER', 1, 'INT'],
+  ['CHARINT', 'INTEGER', 1, 'INT'],
+  ['FLOATING POINT', 'INTEGER', 1, 'INT'],
+  ['point', 'INTEGER', 1, 'INT'],
+  ['VARCHAR(255)', 'TEXT', 2, 'CHAR'],
+  ['varchar(9)', 'TEXT', 2, 'CHAR'],
+  ['NVARCHAR(100)', 'TEXT', 2, 'CHAR'],
+  ['NATIVE CHARACTER(70)', 'TEXT', 2, 'CHAR'],
+  ['CLOB', 'TEXT', 2, 'CLOB'],
+  ['TEXT', 'TEXT', 2, 'TEXT'],
+  ['LONGTEXT', 'TEXT', 2, 'TEXT'],
+  ['BLOB SUB_TYPE TEXT', 'TEXT', 2, 'TEXT'],
+  ['BLOB', 'BLOB', 3, 'BLOB'],
+  ['', 'BLOB', 3, 'no type specified'],
+  ['   ', 'BLOB', 3, 'no type specified'],
+  ['REAL', 'REAL', 4, 'REAL'],
+  ['FLOAT', 'REAL', 4, 'FLOA'],
+  ['DOUBLE', 'REAL', 4, 'DOUB'],
+  ['DOUBLE PRECISION', 'REAL', 4, 'DOUB'],
+  ['STRING', 'NUMERIC', 5, 'no substring matched'],
+  ['BOOLEAN', 'NUMERIC', 5, 'no substring matched'],
+  ['DATETIME', 'NUMERIC', 5, 'no substring matched'],
+  ['TIMESTAMP', 'NUMERIC', 5, 'no substring matched'],
+  ['DATE', 'NUMERIC', 5, 'no substring matched'],
+  ['JSON', 'NUMERIC', 5, 'no substring matched'],
+  ['UUID', 'NUMERIC', 5, 'no substring matched'],
+  ['ENUM', 'NUMERIC', 5, 'no substring matched'],
+  ['DECIMAL(10,2)', 'NUMERIC', 5, 'no substring matched'],
+  ['NUMERIC', 'NUMERIC', 5, 'no substring matched'],
+  ['ANY', 'NUMERIC', 5, 'no substring matched'],
+  ['\u0131nt', 'NUMERIC', 5, 'no substring matched'],
+  ['\ufb02oat', 'NUMERIC', 5, 'no substring matched']
+];
+
+/* [literal, numeric/integer class, numeric/integer value, real class, real value]
+   TEXT and BLOB affinity always store the literal unchanged, so they are
+   asserted against the literal itself rather than a stored expectation. */
+var SIMULATOR_FIXTURES = [
+  [' 42 ', 'integer', '42', 'real', '42.0'],
+  ['+7', 'integer', '7', 'real', '7.0'],
+  ['-0', 'integer', '0', 'real', '0.0'],
+  ['.5', 'real', '0.5', 'real', '0.5'],
+  ['1.', 'integer', '1', 'real', '1.0'],
+  ['1.0', 'integer', '1', 'real', '1.0'],
+  ['2.0', 'integer', '2', 'real', '2.0'],
+  ['1e2', 'integer', '100', 'real', '100.0'],
+  ['1E2', 'integer', '100', 'real', '100.0'],
+  ['12e2', 'integer', '1200', 'real', '1200.0'],
+  ['3.0e+5', 'integer', '300000', 'real', '300000.0'],
+  ['1.5', 'real', '1.5', 'real', '1.5'],
+  ['9223372036854775807', 'integer', '9223372036854775807', 'real', '9.223372036854776e+18'],
+  ['9223372036854775808', 'real', '9.223372036854776e+18', 'real', '9.223372036854776e+18'],
+  ['-9223372036854775808', 'integer', '-9223372036854775808', 'real', '-9.223372036854776e+18'],
+  ['-9223372036854775809', 'real', '-9.223372036854776e+18', 'real', '-9.223372036854776e+18'],
+  ['1e308', 'real', '1e+308', 'real', '1e+308'],
+  ['1e400', 'real', 'Infinity', 'real', 'Infinity'],
+  ['0x1A', 'text', '0x1A', 'text', '0x1A'],
+  ['Infinity', 'text', 'Infinity', 'text', 'Infinity'],
+  ['NaN', 'text', 'NaN', 'text', 'NaN'],
+  ['', 'text', '', 'text', ''],
+  ['  ', 'text', '  ', 'text', '  '],
+  ['abc', 'text', 'abc', 'text', 'abc'],
+  ['abc123', 'text', 'abc123', 'text', 'abc123'],
+  ['0123', 'integer', '123', 'real', '123.0'],
+  ['007', 'integer', '7', 'real', '7.0'],
+  ['-1.5e-3', 'real', '-0.0015', 'real', '-0.0015'],
+  ['1_000', 'text', '1_000', 'text', '1_000'],
+  ['+.5e+1', 'integer', '5', 'real', '5.0'],
+  ['\t42\n', 'integer', '42', 'real', '42.0'],
+  ['\u00a042', 'text', '\u00a042', 'text', '\u00a042'],
+  ['-9223372036854775808.0', 'real', '-9.223372036854776e+18', 'real', '-9.223372036854776e+18'],
+  ['-9223372036854775808e0', 'real', '-9.223372036854776e+18', 'real', '-9.223372036854776e+18'],
+  ['9223372036854774784.0', 'integer', '9223372036854774784', 'real', '9.223372036854775e+18'],
+  ['-9223372036854774784.0', 'integer', '-9223372036854774784', 'real', '-9.223372036854775e+18']
+];
+
+var STRICT_FIXTURES = [
+  ['INT', true], ['INTEGER', true], ['REAL', true], ['TEXT', true],
+  ['BLOB', true], ['ANY', true], ['int', true], ['  TEXT  ', true],
+  ['NUMERIC', false], ['VARCHAR(20)', false], ['BOOLEAN', false],
+  ['DATETIME', false], ['FLOAT', false], ['DECIMAL(10,2)', false],
+  ['STRING', false], ['POINT', false], ['BIGINT', false],
+  ['DOUBLE', false], ['CHAR(4)', false], ['INTEGER(4)', false], ['', false]
+];
+
+function runSelfTest() {
+  var results = [], passed = 0, failed = 0;
+
+  function check(group, name, actual, expected) {
+    var ok = actual === expected;
+    if (ok) passed++; else failed++;
+    results.push({ group: group, name: name, ok: ok, actual: String(actual), expected: String(expected) });
+  }
+
+  var i, f, a, r;
+
+  /* Affinity: rule number, affinity and reported substring. */
+  for (i = 0; i < AFFINITY_FIXTURES.length; i++) {
+    f = AFFINITY_FIXTURES[i];
+    a = affinityOf(f[0]);
+    check('affinity', 'affinity of ' + JSON.stringify(f[0]), a.aff, f[1]);
+    check('affinity', 'rule for ' + JSON.stringify(f[0]), a.rule, f[2]);
+    check('affinity', 'matched substring for ' + JSON.stringify(f[0]), a.matched, f[3]);
+  }
+
+  /* Insert simulation, per affinity, against values measured on SQLite 3.50.4. */
+  for (i = 0; i < SIMULATOR_FIXTURES.length; i++) {
+    f = SIMULATOR_FIXTURES[i];
+    var num = simulate('NUMERIC', f[0]);
+    var int_ = simulate('INTEGER', f[0]);
+    var real = simulate('REAL', f[0]);
+    var text = simulate('TEXT', f[0]);
+    var blob = simulate('BLOB', f[0]);
+    check('simulate', 'NUMERIC class for ' + JSON.stringify(f[0]), num.cls, f[1]);
+    check('simulate', 'NUMERIC value for ' + JSON.stringify(f[0]), num.text, f[2]);
+    check('simulate', 'INTEGER matches NUMERIC class for ' + JSON.stringify(f[0]), int_.cls, num.cls);
+    check('simulate', 'INTEGER matches NUMERIC value for ' + JSON.stringify(f[0]), int_.text, num.text);
+    check('simulate', 'REAL class for ' + JSON.stringify(f[0]), real.cls, f[3]);
+    check('simulate', 'REAL value for ' + JSON.stringify(f[0]), real.text, f[4]);
+    check('simulate', 'TEXT stores unchanged for ' + JSON.stringify(f[0]), text.cls + '|' + text.text, 'text|' + f[0]);
+    check('simulate', 'BLOB stores unchanged for ' + JSON.stringify(f[0]), blob.cls + '|' + blob.text, 'text|' + f[0]);
+  }
+
+  /* STRICT: exact name match, six accepted names. */
+  for (i = 0; i < STRICT_FIXTURES.length; i++) {
+    f = STRICT_FIXTURES[i];
+    check('strict', 'STRICT accepts ' + JSON.stringify(f[0]), strictVerdict(f[0], 's', 'x').accepted, f[1]);
+  }
+  check('strict', 'STRICT rejection uses the engine wording',
+    strictVerdict('BIGINT', 's', 'x').message, 'unknown datatype for s.x: "BIGINT"');
+  /* Measured on 3.50.4: CREATE TABLE users(email) STRICT refuses with
+     `missing datatype for users.email`, a different sentence from the
+     unknown-datatype form, so a column with no declared type gets it. */
+  check('strict', 'a column with no declared type gets the missing-datatype wording',
+    strictVerdict('', 'users', 'email').message, 'missing datatype for users.email');
+  check('strict', 'whitespace only is still a missing datatype, not an unknown one',
+    strictVerdict('   ', 'users', 'email').message, 'missing datatype for users.email');
+  check('strict', 'BIGINT gets INTEGER affinity even though STRICT rejects it',
+    affinityOf('BIGINT').aff + '/' + strictVerdict('BIGINT', 's', 'x').accepted, 'INTEGER/false');
+
+  /* SURPRISING flag. */
+  var surprising = ['STRING', 'POINT', 'BOOLEAN', 'DATETIME', 'DECIMAL(10,2)',
+    'CHARINT', 'FLOATING POINT', 'BLOB SUB_TYPE TEXT', 'JSON', 'UUID', 'ENUM', 'ANY'];
+  var unsurprising = ['INTEGER', 'TEXT', 'BLOB', 'REAL', 'NUMERIC', 'INT',
+    'TINYINT(1)', 'BIGINT(20)', 'MEDIUMINT', 'INT UNSIGNED', 'UNSIGNED BIG INT',
+    'VARCHAR(255)', 'CLOB', 'DOUBLE PRECISION', 'FLOAT'];
+  for (i = 0; i < surprising.length; i++) {
+    check('surprising', JSON.stringify(surprising[i]) + ' is flagged',
+      surprisingVerdict(surprising[i], affinityOf(surprising[i])).flagged, true);
+  }
+  for (i = 0; i < unsurprising.length; i++) {
+    check('surprising', JSON.stringify(unsurprising[i]) + ' is not flagged',
+      surprisingVerdict(unsurprising[i], affinityOf(unsurprising[i])).flagged, false);
+  }
+
+  /* Parser. */
+  var p = parseDDL('CREATE TABLE t(a STRING, b POINT, c BOOLEAN, d DATETIME, e DECIMAL(10,2));');
+  check('parse', 'one table found', p.tables.length, 1);
+  check('parse', 'five columns found', p.tables[0].columns.length, 5);
+  check('parse', 'DECIMAL(10,2) survives the comma split', p.tables[0].columns[4].declaredType, 'DECIMAL(10,2)');
+  check('parse', 'column name read', p.tables[0].columns[0].name, 'a');
+
+  p = parseDDL('CREATE TABLE `x` (\n  `id` BIGINT(20) NOT NULL, -- comment, with a comma\n  "odd name" VARCHAR(64) DEFAULT \'a,b\',\n  [br] INT UNSIGNED,\n  bare\n);');
+  check('parse', 'backticked table name', p.tables[0].name, 'x');
+  check('parse', 'four columns past comments and quoted commas', p.tables[0].columns.length, 4);
+  check('parse', 'backticked column name unquoted', p.tables[0].columns[0].name, 'id');
+  check('parse', 'type stops at NOT NULL', p.tables[0].columns[0].declaredType, 'BIGINT(20)');
+  check('parse', 'double quoted column name unquoted', p.tables[0].columns[1].name, 'odd name');
+  check('parse', 'comma inside a string default does not split', p.tables[0].columns[1].declaredType, 'VARCHAR(64)');
+  check('parse', 'bracketed column name unquoted', p.tables[0].columns[2].name, 'br');
+  check('parse', 'multi word type is kept whole', p.tables[0].columns[2].declaredType, 'INT UNSIGNED');
+  check('parse', 'column with no type is not dropped', p.tables[0].columns[3].name, 'bare');
+  check('parse', 'column with no type gets BLOB affinity', affinityOf(p.tables[0].columns[3].declaredType).aff, 'BLOB');
+
+  p = parseDDL("CREATE TABLE m(id INT UNSIGNED NOT NULL AUTO_INCREMENT, s VARCHAR(64) NOT NULL COMMENT 'x', d DATETIME);");
+  check('parse', 'AUTO_INCREMENT terminates a MySQL declared type', p.tables[0].columns[0].declaredType, 'INT UNSIGNED');
+  check('parse', 'COMMENT terminates a MySQL declared type', p.tables[0].columns[1].declaredType, 'VARCHAR(64)');
+  check('parse', 'MySQL DATETIME still reaches rule 5', affinityOf(p.tables[0].columns[2].declaredType).rule, 5);
+
+  p = parseDDL("CREATE TABLE e(a TEXT CHECK(a IN ('x','y')), b INT, PRIMARY KEY(b), FOREIGN KEY(b) REFERENCES o(id));");
+  check('parse', 'table level constraints are not columns', p.tables[0].columns.length, 2);
+  check('parse', 'CHECK with a comma inside stays in one column', p.tables[0].columns[0].name, 'a');
+  check('parse', 'table level PRIMARY KEY marks the column', p.tables[0].columns[1].isPrimaryKey, true);
+
+  p = parseDDL('CREATE TEMPORARY TABLE IF NOT EXISTS main.t2(x INTEGER PRIMARY KEY) WITHOUT ROWID;');
+  check('parse', 'TEMPORARY and IF NOT EXISTS and schema prefix', p.tables[0].name, 't2');
+  check('parse', 'WITHOUT ROWID detected', p.tables[0].withoutRowid, true);
+
+  p = parseDDL('CREATE TABLE u(a INT');
+  check('parse', 'unbalanced parenthesis is refused, not guessed', p.tables[0].error !== null, true);
+
+  p = parseDDL(new Array(MAX_INPUT + 2).join('x'));
+  check('parse', 'an oversized paste is refused by name, not truncated silently', p.errors.length, 1);
+  check('parse', 'an oversized paste yields no tables', p.tables.length, 0);
+
+  p = parseDDL('SELECT * FROM t;');
+  check('parse', 'a SELECT yields no tables', p.tables.length, 0);
+
+  p = parseDDL('CREATE TABLE v AS SELECT 1;');
+  check('parse', 'CREATE TABLE AS SELECT is refused with a named reason', p.tables[0].error !== null, true);
+
+  /* Rowid alias. */
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY, v TEXT);');
+  check('rowid', 'INTEGER PRIMARY KEY is an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  check('rowid', 'a plain TEXT column is not a primary key', rowidVerdict(p.tables[0].columns[1], p.tables[0]).state, 'not-pk');
+  p = parseDDL('CREATE TABLE r(k INT PRIMARY KEY, v TEXT);');
+  check('rowid', 'INT PRIMARY KEY is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE r(k POINT PRIMARY KEY, v TEXT);');
+  check('rowid', 'POINT PRIMARY KEY is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  check('rowid', 'INTEGER, INT and POINT all share INTEGER affinity',
+    affinityOf('INTEGER').aff + affinityOf('INT').aff + affinityOf('POINT').aff, 'INTEGERINTEGERINTEGER');
+  p = parseDDL('CREATE TABLE r(k integer primary key, v TEXT);');
+  check('rowid', 'lowercase integer primary key is an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY, v TEXT) WITHOUT ROWID;');
+  check('rowid', 'WITHOUT ROWID kills the alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE r(k INTEGER, j INTEGER, PRIMARY KEY(k,j));');
+  check('rowid', 'a composite primary key is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+
+  /* The DESC quirk. Measured on SQLite 3.50.4: with a column definition
+     PRIMARY KEY DESC the column is NOT the rowid, INSERT ('abc','z') is
+     accepted and k holds text, and AUTOINCREMENT on it is refused. Written
+     ASC, or as a table level PRIMARY KEY(k DESC), it IS the rowid and the
+     same insert is rejected with "datatype mismatch". */
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY DESC, v TEXT);');
+  check('rowid', 'INTEGER PRIMARY KEY DESC is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  check('rowid', 'the DESC quirk is recorded on the column, not guessed at verdict time', p.tables[0].columns[0].pkDesc, true);
+  p = parseDDL('CREATE TABLE r(k integer primary key desc, v TEXT);');
+  check('rowid', 'lowercase primary key desc is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY ASC, v TEXT);');
+  check('rowid', 'INTEGER PRIMARY KEY ASC is an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  check('rowid', 'ASC does not set the DESC flag', p.tables[0].columns[0].pkDesc, false);
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY DESC NOT NULL, v TEXT);');
+  check('rowid', 'DESC followed by another column constraint is still not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE r(k INTEGER, v TEXT, PRIMARY KEY(k DESC));');
+  check('rowid', 'table level PRIMARY KEY(k DESC) IS an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  check('rowid', 'the table level DESC form never sets the column flag', p.tables[0].columns[0].pkDesc, false);
+  p = parseDDL('CREATE TABLE r(k INTEGER, v TEXT, PRIMARY KEY(k ASC));');
+  check('rowid', 'table level PRIMARY KEY(k ASC) IS an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  p = parseDDL('CREATE TABLE r(k INT PRIMARY KEY DESC, v TEXT);');
+  check('rowid', 'INT PRIMARY KEY DESC is not an alias either', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+
+  /* Constraint keywords count only as tokens, never inside a quoted string
+     or identifier. Each verdict below was measured on SQLite 3.50.4 with
+     PRAGMA table_info (pk column) and INSERT INTO r VALUES('abc','z'). */
+  p = parseDDL("CREATE TABLE r(k INTEGER DEFAULT 'primary key', v TEXT);");
+  check('rowid', "DEFAULT 'primary key' does not make a primary key", p.tables[0].columns[0].isPrimaryKey, false);
+  check('rowid', "DEFAULT 'primary key' is not a rowid alias", rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'not-pk');
+  p = parseDDL("CREATE TABLE r(k INTEGER DEFAULT 'it''s a primary key', v TEXT);");
+  check('rowid', 'a literal with a doubled quote escape stays blanked', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'not-pk');
+  p = parseDDL('CREATE TABLE r(k INTEGER REFERENCES "primary key"(id), v TEXT);');
+  check('rowid', 'a quoted identifier named primary key is not a constraint', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'not-pk');
+  p = parseDDL("CREATE TABLE r(k INTEGER, v TEXT, CHECK(v <> 'primary key(k)'));");
+  check('rowid', 'primary key(k) inside a CHECK literal marks no column', p.tables[0].columns[0].isPrimaryKey, false);
+  p = parseDDL("CREATE TABLE r(k INTEGER PRIMARY KEY DEFAULT 'primary key desc', v TEXT);");
+  check('rowid', 'a genuine INTEGER PRIMARY KEY beside a string literal is still an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  check('rowid', 'DESC inside a literal does not set the DESC flag', p.tables[0].columns[0].pkDesc, false);
+  p = parseDDL('CREATE TABLE r(k INTEGER, v TEXT, PRIMARY KEY("k"));');
+  check('rowid', 'a table level PRIMARY KEY with a quoted name still finds the column', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+
+  /* MySQL bare index clauses are table constraints, not columns. Every one of
+     these lines appears in ordinary mysqldump output. */
+  p = parseDDL('CREATE TABLE `u` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `email` varchar(255) NOT NULL,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `uq` (`email`),\n  KEY `idx_email` (`email`),\n  INDEX `idx2` (`id`),\n  KEY (`id`),\n  KEY idx_bare (id),\n  KEY `u2` USING BTREE (`id`),\n  KEY `idx_pref` (`email`(10), `id` DESC),\n  FULLTEXT KEY `ft` (`email`),\n  SPATIAL KEY `sp` (`email`),\n  CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `o` (`id`)\n) ENGINE=InnoDB;');
+  check('parse', 'a mysqldump body yields only its real columns', p.tables[0].columns.length, 2);
+  check('parse', 'the first mysqldump column is id', p.tables[0].columns[0].name, 'id');
+  check('parse', 'the second mysqldump column is email', p.tables[0].columns[1].name, 'email');
+  check('parse', 'the mysqldump PRIMARY KEY clause still marks the column', p.tables[0].columns[0].isPrimaryKey, true);
+  p = parseDDL('CREATE TABLE t(a INT, KEY `fx` (LOWER(a)), KEY `dn` (`a` DESC));');
+  check('parse', 'a functional index with a quoted name is not a column', p.tables[0].columns.length, 1);
+  check('parse', 'the real column survives beside a functional index', p.tables[0].columns[0].name, 'a');
+
+  /* KEY is a legal unquoted column name in SQLite, so the index clause test
+     matches on shape and must never swallow a real column called key. */
+  p = parseDDL('CREATE TABLE s(key TEXT PRIMARY KEY, value TEXT);');
+  check('parse', 'a column named key survives', p.tables[0].columns.length, 2);
+  check('parse', 'the column named key keeps its type', p.tables[0].columns[0].name + '/' + p.tables[0].columns[0].declaredType, 'key/TEXT');
+  p = parseDDL('CREATE TABLE s(key VARCHAR(64) NOT NULL, v TEXT);');
+  check('parse', 'key VARCHAR(64) is a column, not an index clause', p.tables[0].columns[0].declaredType, 'VARCHAR(64)');
+  p = parseDDL('CREATE TABLE s(key DECIMAL(10,2), v TEXT);');
+  check('parse', 'key DECIMAL(10,2) is a column, not an index clause', p.tables[0].columns[0].declaredType, 'DECIMAL(10,2)');
+  p = parseDDL("CREATE TABLE s(key ENUM('a','b'), v TEXT);");
+  check('parse', 'key ENUM with string arguments is a column', p.tables[0].columns[0].declaredType, "ENUM('a','b')");
+  p = parseDDL('CREATE TABLE s(key INT(11) unsigned, v TEXT);');
+  check('parse', 'key INT(11) unsigned is a column', p.tables[0].columns[0].declaredType, 'INT(11) unsigned');
+
+  /* Quoted and non-ASCII type names, read the way sqlite3AddColumn reads
+     them. Every expected value below was measured on SQLite 3.50.4: the
+     affinity by insert and CAST, STRICT by CREATE TABLE ... STRICT, the rowid
+     verdict by table_info pk and INSERT INTO r VALUES('abc','z'). */
+  check('affinity', 'a quoted "TEXT" followed by INT reads only the quoted run', columnAffinity('"TEXT" INT').aff, 'TEXT');
+  check('affinity', '[x] INT loses its last character and falls to NUMERIC', columnAffinity('[x] INT').aff, 'NUMERIC');
+  check('affinity', 'an empty quoted type is not "no type specified"', columnAffinity('""').aff, 'NUMERIC');
+  check('affinity', 'a quoted single space is not "no type specified"', columnAffinity('" "').aff, 'NUMERIC');
+  check('affinity', '"INTEGER" UNSIGNED reads INTEGER', columnAffinity('"INTEGER" UNSIGNED').aff, 'INTEGER');
+  check('affinity', 'a quoted "BLOB" is BLOB', columnAffinity('"BLOB"').aff, 'BLOB');
+  check('affinity', 'no declared type is still rule 3', columnAffinity('').rule, 3);
+  check('affinity', 'the highlight for "INTEGER" lands inside the quotes', columnAffinity('"INTEGER"').index, 1);
+  check('strict', 'STRICT accepts a quoted "INTEGER"', strictVerdict('"INTEGER"', 's', 'x').accepted, true);
+  check('strict', 'STRICT accepts a bracketed [integer]', strictVerdict('[integer]', 's', 'x').accepted, true);
+  check('strict', 'STRICT rejects " INTEGER " with the spaces kept', strictVerdict('" INTEGER "', 's', 'x').message, 'unknown datatype for s.x: " INTEGER "');
+  check('strict', 'STRICT reports "INTEGER" UNSIGNED as "INTEGER"', strictVerdict('"INTEGER" UNSIGNED', 's', 'x').message, 'unknown datatype for s.x: "INTEGER"');
+  check('strict', 'STRICT reports an empty quoted type as ""', strictVerdict('""', 's', 'x').message, 'unknown datatype for s.x: ""');
+  check('strict', 'STRICT reports [x] INT as "x] IN"', strictVerdict('[x] INT', 's', 'x').message, 'unknown datatype for s.x: "x] IN"');
+  check('strict', 'STRICT rejects a dotless i in int', strictVerdict('\u0131nt', 's', 'x').accepted, false);
+  p = parseDDL('CREATE TABLE r(k "INTEGER" PRIMARY KEY, v TEXT);');
+  check('rowid', 'k "INTEGER" PRIMARY KEY is an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  p = parseDDL('CREATE TABLE r(k [INTEGER] PRIMARY KEY, v TEXT);');
+  check('rowid', 'k [INTEGER] PRIMARY KEY is an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+  p = parseDDL('CREATE TABLE r(k " INTEGER " PRIMARY KEY, v TEXT);');
+  check('rowid', 'k " INTEGER " PRIMARY KEY is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE r(k "INTEGER" UNSIGNED PRIMARY KEY, v TEXT);');
+  check('rowid', 'k "INTEGER" UNSIGNED PRIMARY KEY is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE r(k \u0131nteger PRIMARY KEY, v TEXT);');
+  check('rowid', 'a dotless i in integer is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  p = parseDDL('CREATE TABLE t(a BOOLEAN pr\u0131mary key, b INT);');
+  check('parse', 'a dotless i keeps a look-alike of PRIMARY inside the type', p.tables[0].columns[0].declaredType, 'BOOLEAN pr\u0131mary key');
+  check('parse', 'and it does not make a primary key', p.tables[0].columns[0].isPrimaryKey, false);
+  p = analyse('CREATE TABLE t(a "TEXT" INT, b [x] INT);', '');
+  check('parse', 'the page reads a column declared "TEXT" INT as TEXT', p.tables[0].columns[0].affinity.aff, 'TEXT');
+  check('parse', 'the page reads a column declared [x] INT as NUMERIC', p.tables[0].columns[1].affinity.aff, 'NUMERIC');
+
+  /* STRICT tables. Measured on 3.50.4 with CREATE TABLE s(i INT, a ANY)
+     STRICT: '1.5' into i fails with "cannot store REAL value in INT column
+     s.i", and '0123' into a stays the text '0123'. The insert simulator
+     leaves STRICT tables out rather than show a value SQLite never holds. */
+  p = analyse('CREATE TABLE s(i INT, a ANY) STRICT;', '');
+  check('parse', 'a STRICT table is detected', p.tables[0].strictTable, true);
+  check('parse', 'ANY in a STRICT table is marked as storing values unchanged', p.tables[0].columns[1].strictAny, true);
+  check('parse', 'INT in a STRICT table is not marked', p.tables[0].columns[0].strictAny, false);
+  p = analyse('CREATE TABLE s(a "ANY") STRICT;', '');
+  check('parse', 'a quoted "ANY" in a STRICT table is marked too', p.tables[0].columns[0].strictAny, true);
+  p = analyse('CREATE TABLE strict(a ANY);', '');
+  check('parse', 'a table named strict is not a STRICT table', p.tables[0].strictTable, false);
+  check('parse', 'ANY in an ordinary table is not marked', p.tables[0].columns[0].strictAny, false);
+  check('surprising', 'ANY in an ordinary table is still said to convert text', p.tables[0].columns[0].surprising.reasons.join(' ').indexOf('silently converted') >= 0, true);
+  p = analyse('CREATE TABLE s(a ANY) STRICT;', '');
+  check('surprising', 'ANY in a STRICT table is never said to convert text', p.tables[0].columns[0].surprising.reasons.join(' ').indexOf('silently converted') < 0, true);
+  p = parseDDL('CREATE TABLE s(i INTEGER PRIMARY KEY) WITHOUT ROWID, STRICT;');
+  check('parse', 'STRICT after WITHOUT ROWID is detected', p.tables[0].strictTable, true);
+  p = parseDDL('CREATE TABLE r(k INT PRIMARY KEY, v TEXT) STRICT;');
+  check('rowid', 'INT PRIMARY KEY in a STRICT table is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  check('rowid', 'and its detail does not claim it accepts abc', rowidVerdict(p.tables[0].columns[0], p.tables[0]).detail.indexOf('The table is STRICT') >= 0, true);
+  p = parseDDL('CREATE TABLE r(k INT PRIMARY KEY, v TEXT);');
+  check('rowid', 'the same column in an ordinary table keeps the accepts-abc detail', rowidVerdict(p.tables[0].columns[0], p.tables[0]).detail.indexOf('accepts a text value like abc') >= 0, true);
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY DESC, v TEXT) STRICT;');
+  check('rowid', 'PRIMARY KEY DESC in a STRICT table is not an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'no-alias');
+  check('rowid', 'and its detail does not claim abc is accepted', rowidVerdict(p.tables[0].columns[0], p.tables[0]).detail.indexOf('is accepted') < 0, true);
+  p = parseDDL('CREATE TABLE r(k INTEGER PRIMARY KEY, v TEXT) STRICT;');
+  check('rowid', 'INTEGER PRIMARY KEY in a STRICT table is still an alias', rowidVerdict(p.tables[0].columns[0], p.tables[0]).state, 'alias');
+
+  /* Payload sizing. This is the claim the README makes about who the page is
+     for, recomputed here so a reader can check it in the browser instead of
+     taking a number on trust. A hand written SQLite schema flags nothing. The
+     same table as mysqldump writes it flags the columns whose declared types
+     are not SQLite type names at all. Both go through the shipped analyse()
+     path, not a shortcut. */
+  function flaggedCount(ddl) {
+    var r = analyse(ddl, ''), n = 0, ti, ci, cc;
+    for (ti = 0; ti < r.tables.length; ti++) {
+      for (ci = 0; ci < r.tables[ti].columns.length; ci++) {
+        cc = r.tables[ti].columns[ci];
+        if (!cc.unparsed && cc.surprising && cc.surprising.flagged) n++;
+      }
+    }
+    return n;
+  }
+  var PLAIN_DDL = 'CREATE TABLE note(id INTEGER PRIMARY KEY, title TEXT, body TEXT, weight REAL, raw BLOB, n NUMERIC);';
+  check('payload', 'a hand written SQLite schema parses six columns',
+    analyse(PLAIN_DDL, '').tables[0].columns.length, 6);
+  check('payload', 'and not one of them is flagged', flaggedCount(PLAIN_DDL), 0);
+  var MYSQL_DDL = 'CREATE TABLE `u` (\n' +
+    '  `id` int(11) NOT NULL AUTO_INCREMENT,\n' +
+    '  `email` varchar(255) NOT NULL,\n' +
+    '  `active` boolean DEFAULT NULL,\n' +
+    '  `created` datetime DEFAULT NULL,\n' +
+    '  `price` decimal(10,2) DEFAULT NULL,\n' +
+    "  `kind` enum('a','b') DEFAULT NULL,\n" +
+    '  PRIMARY KEY (`id`),\n' +
+    '  KEY `idx_email` (`email`)\n' +
+    ') ENGINE=InnoDB;';
+  check('payload', 'the same table from mysqldump parses six columns and no index clauses',
+    analyse(MYSQL_DDL, '').tables[0].columns.length, 6);
+  check('payload', 'four of those six are flagged', flaggedCount(MYSQL_DDL), 4);
+  check('payload', 'int(11) is not one of them', surprisingVerdict('int(11)', affinityOf('int(11)')).flagged, false);
+  check('payload', 'varchar(255) is not one of them', surprisingVerdict('varchar(255)', affinityOf('varchar(255)')).flagged, false);
+
+  /* Whitespace: SQLite trims the six ASCII whitespace characters and nothing else. */
+  check('whitespace', 'ASCII whitespace is trimmed before conversion', simulate('NUMERIC', '\x0B42\f').text, '42');
+  check('whitespace', 'a non breaking space is not whitespace', simulate('NUMERIC', '\u00a042').cls, 'text');
+
+  /* POSITIVE CONTROL. This assertion is designed to fail. If the summary below
+     ever reports zero failures, the self test stopped running before it got
+     here and every result above it is worthless. */
+  check('positive control', 'deliberate failure, proves the run reached the end',
+    'this assertion must fail', 'and it does');
+
+  return {
+    total: passed + failed,
+    passed: passed,
+    failed: failed,
+    results: results,
+    controlOk: failed === 1
+  };
+}
+
+var API = {
+  asciiTrim: asciiTrim,
+  affinityOf: affinityOf,
+  asciiUpper: asciiUpper,
+  typeReading: typeReading,
+  columnAffinity: columnAffinity,
+  simulate: simulate,
+  formatReal: formatReal,
+  fitsInt64: fitsInt64,
+  strictVerdict: strictVerdict,
+  rowidVerdict: rowidVerdict,
+  surprisingVerdict: surprisingVerdict,
+  stripComments: stripComments,
+  parseDDL: parseDDL,
+  analyse: analyse,
+  splitProbes: splitProbes,
+  runSelfTest: runSelfTest,
+  STRICT_TYPES: STRICT_TYPES
+};
+global.SCAA = API;
+if (typeof module === 'object' && module && module.exports) module.exports = API;
+
+/* ------------------------------------------------------------------ *
+ * 4. Rendering. User content only ever reaches the page as textContent.
+ * ------------------------------------------------------------------ */
+
+if (typeof document === 'undefined') return;
+
+var EXAMPLE_DDL = 'CREATE TABLE t(a STRING, b POINT, c BOOLEAN, d DATETIME, e DECIMAL(10,2));';
+var EXAMPLE_PROBES = '0123\n1.5\n12e2\nabc\n9223372036854775808';
+
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+
+function showLiteral(s) {
+  if (s === '') return '(empty string)';
+  var out = s
+    .replace(/\\/g, '\\\\')
+    .replace(/\t/g, '\\t')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\x0B/g, '\\v')
+    .replace(/\f/g, '\\f')
+    .replace(/\u00a0/g, '\\u00a0');
+  /* After escaping, the plain ASCII space is the only invisible character
+     left, so a literal with a leading or trailing space is shown quoted. */
+  if (out.charAt(0) === ' ' || out.charAt(out.length - 1) === ' ') return '"' + out + '"';
+  return out;
+}
+
+function affSpan(aff) {
+  return el('span', 'aff aff-' + aff, aff);
+}
+
+/* The affinity cell. An ANY column in a STRICT table gets no affinity at
+   all, so the five-rule answer is labelled as the ordinary-table one. */
+function affCell(c) {
+  var td = el('td', c.strictAny ? 'wrapcell' : null);
+  td.appendChild(affSpan(c.affinity.aff));
+  if (c.strictAny) {
+    td.appendChild(el('div', 'hint', 'In this STRICT table an ANY column has no affinity and keeps every value exactly as received. ' + c.affinity.aff + ' is what the same column gets in an ordinary table.'));
+  }
+  return td;
+}
+
+function declaredTypeCell(declared, info) {
+  var td = el('td', 'wrapcell mono');
+  if (declared === '') {
+    td.appendChild(el('span', 'no-flag', '(no type specified)'));
+    return td;
+  }
+  if (info.index < 0) { td.appendChild(document.createTextNode(declared)); return td; }
+  td.appendChild(document.createTextNode(declared.slice(0, info.index)));
+  var mk = document.createElement('mark');
+  mk.className = 'hit';
+  mk.textContent = declared.slice(info.index, info.index + info.matched.length);
+  td.appendChild(mk);
+  td.appendChild(document.createTextNode(declared.slice(info.index + info.matched.length)));
+  return td;
+}
+
+function panel(id, heading) {
+  var s = el('section', 'panel');
+  s.setAttribute('aria-labelledby', id);
+  var h = el('h2', null, heading);
+  h.id = id;
+  s.appendChild(h);
+  return s;
+}
+
+function errorBox(title, body, echo) {
+  var box = el('div', 'errbox');
+  box.appendChild(el('p', 'title', title));
+  if (body) box.appendChild(el('p', null, body));
+  if (echo) {
+    var pre = el('pre', 'echo', echo);
+    box.appendChild(pre);
+  }
+  return box;
+}
+
+function allColumns(model) {
+  var out = [], i, j;
+  for (i = 0; i < model.tables.length; i++) {
+    for (j = 0; j < model.tables[i].columns.length; j++) {
+      out.push({ table: model.tables[i], col: model.tables[i].columns[j] });
+    }
+  }
+  return out;
+}
+
+function renderPanel1(model, cols) {
+  var s = panel('p1', '1. Affinity verdict');
+  s.appendChild(el('p', 'note', 'The affinity of a column comes from five ordered tests on the declared type. The first test that matches wins, so the order changes the answer.'));
+  var ul = el('ul', 'rules');
+  ul.appendChild(el('li', null, 'Rule 1: the declared type contains "INT", so the affinity is INTEGER.'));
+  ul.appendChild(el('li', null, 'Rule 2: it contains "CHAR", "CLOB" or "TEXT", so the affinity is TEXT. VARCHAR contains CHAR.'));
+  ul.appendChild(el('li', null, 'Rule 3: it contains "BLOB", or no type was specified, so the affinity is BLOB.'));
+  ul.appendChild(el('li', null, 'Rule 4: it contains "REAL", "FLOA" or "DOUB", so the affinity is REAL.'));
+  ul.appendChild(el('li', null, 'Rule 5: otherwise the affinity is NUMERIC.'));
+  s.appendChild(ul);
+
+  var wrap = el('div', 'tablewrap');
+  var tbl = document.createElement('table');
+  var cap = el('caption', null, 'One row per parsed column. The matched substring is underlined inside the declared type.');
+  tbl.appendChild(cap);
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  ['Table', 'Column', 'Declared type', 'Rule', 'Matched', 'Affinity', 'Flag'].forEach(function (h) {
+    var th = el('th', null, h);
+    th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  var flagged = 0;
+  cols.forEach(function (entry) {
+    var c = entry.col, tr = document.createElement('tr');
+    if (c.unparsed) {
+      tr.appendChild(el('td', 'mono', entry.table.name));
+      var td0 = el('td', 'wrapcell mono', c.raw);
+      tr.appendChild(td0);
+      var td1 = el('td', 'wrapcell');
+      td1.setAttribute('colspan', '5');
+      td1.appendChild(el('span', 'bad', 'not parsed as a column definition'));
+      tr.appendChild(td1);
+      tbody.appendChild(tr);
+      return;
+    }
+    if (c.surprising.flagged) { tr.className = 'flagged'; flagged++; }
+    tr.appendChild(el('td', 'mono', entry.table.name));
+    tr.appendChild(el('td', 'mono', c.name));
+    tr.appendChild(declaredTypeCell(c.declaredType, c.affinity));
+    tr.appendChild(el('td', null, String(c.affinity.rule)));
+    tr.appendChild(el('td', 'wrapcell mono', c.affinity.matched));
+    tr.appendChild(affCell(c));
+    var tdF = el('td', 'wrapcell');
+    if (c.surprising.flagged) {
+      var f = el('span', 'flag');
+      f.appendChild(el('span', 'glyph', '[!] '));
+      f.appendChild(document.createTextNode('SURPRISING'));
+      tdF.appendChild(f);
+      tdF.appendChild(el('div', 'hint', c.surprising.reasons.join('; ')));
+    } else {
+      tdF.appendChild(el('span', 'no-flag', 'as declared'));
+    }
+    tr.appendChild(tdF);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  s.appendChild(wrap);
+
+  s.appendChild(el('h3', null, 'What SURPRISING means here'));
+  var dl = el('dl', 'states');
+  var d1 = el('dt', null, 'The flag is never carried by colour alone.');
+  dl.appendChild(d1);
+  dl.appendChild(el('dd', null, 'A flagged row shows the word SURPRISING and the glyph [!], so it survives a greyscale printout. ' + flagged + ' of ' + cols.length + ' rows are flagged in this run.'));
+  dl.appendChild(el('dt', null, 'A row is flagged when any of three string tests holds.'));
+  dl.appendChild(el('dd', null, 'One: an earlier rule fired and preempted a later rule whose substring is also present, so the rule order decided the answer. Two: rule 5 fired, meaning no documented substring matched and the column falls through to NUMERIC. Three: rule 1 fired on an "INT" that sits inside a name which is not an integer typename. A declared type that is itself one of the five affinity names is never flagged.'));
+  s.appendChild(dl);
+  return s;
+}
+
+function renderPanel2(model, cols) {
+  var s = panel('p2', '2. Insert simulator');
+  var strictNames = [];
+  var simCols = cols.filter(function (e) {
+    if (e.col.unparsed) return false;
+    if (e.table.strictTable) {
+      if (strictNames.indexOf(e.table.name) < 0) strictNames.push(e.table.name);
+      return false;
+    }
+    return true;
+  });
+  if (simCols.length > 40) simCols = simCols.slice(0, 40);
+
+  var hasInteger = false, hasNumeric = false;
+  simCols.forEach(function (e) {
+    if (e.col.affinity.aff === 'INTEGER') hasInteger = true;
+    if (e.col.affinity.aff === 'NUMERIC') hasNumeric = true;
+  });
+
+  if (hasInteger && hasNumeric) {
+    var note = el('p', 'note');
+    note.appendChild(el('strong', null, 'INTEGER and NUMERIC affinity store values identically. '));
+    note.appendChild(document.createTextNode(
+      'The difference shows up only inside a CAST expression. CAST(\'1.5\' AS POINT) is integer 1, CAST(\'1.5\' AS BOOLEAN) is real 1.5. ' +
+      'Columns with those two affinities show the same simulated result below and differ only in the rule number that produced them. ' +
+      'What this panel does distinguish is TEXT and BLOB affinity from the numeric family.'));
+    s.appendChild(note);
+  } else {
+    s.appendChild(el('p', 'note', 'Each probe literal below is inserted as a text value. The result is the storage class SQLite would end up with, and the value it would hold.'));
+  }
+
+  if (strictNames.length) {
+    var sn = el('p', 'note');
+    sn.appendChild(el('strong', null, 'Left out of this simulator: ' + strictNames.join(', ') + '. '));
+    sn.appendChild(document.createTextNode(
+      'A STRICT table does not store a value its column type cannot hold. It refuses the insert, and an ANY column keeps every value exactly as received. ' +
+      'Measured on 3.50.4 with CREATE TABLE s(i INT, a ANY) STRICT: \'1.5\' into i fails with "cannot store REAL value in INT column s.i", and \'0123\' into a stays the text \'0123\'. ' +
+      'Rather than show a stored value SQLite would never hold, this panel leaves STRICT tables out.'));
+    s.appendChild(sn);
+  }
+
+  if (model.probes.length === 0) {
+    s.appendChild(el('p', 'calm', 'Add one probe literal per line to simulate inserts.'));
+    return s;
+  }
+  if (simCols.length === 0) {
+    s.appendChild(el('p', 'calm', 'No parsed columns to simulate against.'));
+    return s;
+  }
+
+  var wrap = el('div', 'tablewrap');
+  var tbl = document.createElement('table');
+  tbl.appendChild(el('caption', null, 'Rows are probe literals. Columns are the parsed table columns with their affinity.'));
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  var th0 = el('th', null, 'Probe literal');
+  th0.setAttribute('scope', 'col');
+  hr.appendChild(th0);
+  simCols.forEach(function (e) {
+    var th = document.createElement('th');
+    th.setAttribute('scope', 'col');
+    th.appendChild(el('div', 'mono', e.col.name));
+    th.appendChild(affSpan(e.col.affinity.aff));
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  model.probes.forEach(function (lit) {
+    var tr = document.createElement('tr');
+    var th = el('th', 'mono', showLiteral(lit));
+    th.setAttribute('scope', 'row');
+    tr.appendChild(th);
+    simCols.forEach(function (e) {
+      var r = simulate(e.col.affinity.aff, lit);
+      var td = el('td', 'wrapcell');
+      td.appendChild(el('span', 'cls-' + r.cls, r.cls));
+      td.appendChild(document.createTextNode(' '));
+      td.appendChild(el('span', 'mono', showLiteral(r.text)));
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  s.appendChild(wrap);
+  s.appendChild(el('p', 'hint', 'Real values are shown as the shortest decimal that round-trips to the same IEEE 754 binary64 value, with .0 added to small whole numbers so a real is never mistaken for an integer. Whitespace and control characters in a literal are shown escaped.'));
+  return s;
+}
+
+function renderPanel3(model, cols) {
+  var s = panel('p3', '3. STRICT verdict');
+  var note = el('p', 'note');
+  note.appendChild(document.createTextNode('A STRICT table accepts six datatype names and matches them exactly, not by substring: '));
+  note.appendChild(el('span', 'mono', STRICT_TYPES.join(', ')));
+  note.appendChild(document.createTextNode('. Anything else, including a parenthesised argument on an otherwise valid name, is rejected.'));
+  s.appendChild(note);
+
+  var wrap = el('div', 'tablewrap');
+  var tbl = document.createElement('table');
+  tbl.appendChild(el('caption', null, 'What a STRICT table would say about each declared type.'));
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  ['Column', 'Declared type', 'Non-strict affinity', 'STRICT verdict'].forEach(function (h) {
+    var th = el('th', null, h);
+    th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  var inversion = false;
+  cols.forEach(function (e) {
+    var c = e.col;
+    if (c.unparsed) return;
+    var tr = document.createElement('tr');
+    tr.appendChild(el('td', 'mono', c.name));
+    tr.appendChild(el('td', 'wrapcell mono', c.declaredType === '' ? '(no type specified)' : c.declaredType));
+    var tdA = el('td');
+    tdA.appendChild(affSpan(c.affinity.aff));
+    tr.appendChild(tdA);
+    var tdV = el('td', 'wrapcell');
+    if (c.strict.accepted) {
+      tdV.appendChild(el('span', 'good', 'accepted'));
+    } else {
+      tdV.appendChild(el('span', 'bad', 'rejected'));
+      tdV.appendChild(el('div', 'hint mono', c.strict.message));
+      if (c.affinity.aff === 'INTEGER' && c.affinity.rule === 1) inversion = true;
+    }
+    tr.appendChild(tdV);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  s.appendChild(wrap);
+
+  if (inversion) {
+    var inv = el('p', 'note');
+    inv.appendChild(el('strong', null, 'The inversion worth knowing: '));
+    inv.appendChild(document.createTextNode('a name like BIGINT gets INTEGER affinity in an ordinary table, because rule 1 only needs the substring "INT" somewhere in the name. A STRICT table still rejects it, because STRICT compares the whole name against its six entries. A type can therefore behave like an integer everywhere except in a STRICT table.'));
+    s.appendChild(inv);
+  }
+  s.appendChild(el('p', 'hint', 'The six accepted names are hardcoded in this page, not fetched. They were measured by attempting CREATE TABLE s(x TYPE) STRICT on SQLite 3.50.4 across 17 candidate names. STRICT tables were added in SQLite 3.37.0, released 2021-11-27.'));
+  return s;
+}
+
+function renderPanel4(model, cols) {
+  var s = panel('p4', '4. Rowid alias');
+  s.appendChild(el('p', 'note', 'This verdict is separate from the affinity table above on purpose. Affinity alone does not predict it: INTEGER, INT and POINT all get INTEGER affinity, and only the column declared exactly INTEGER becomes an alias for the rowid. Nor does the declared type settle it on its own, because adding DESC to the column level PRIMARY KEY clause takes the alias away again.'));
+
+  var pks = cols.filter(function (e) { return !e.col.unparsed && e.col.isPrimaryKey; });
+  if (pks.length === 0) {
+    s.appendChild(el('p', 'calm', 'No column in this schema is declared PRIMARY KEY, so no column can be a rowid alias.'));
+    return s;
+  }
+  var wrap = el('div', 'tablewrap');
+  var tbl = document.createElement('table');
+  tbl.appendChild(el('caption', null, 'Every column declared PRIMARY KEY, and whether it is the rowid.'));
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  ['Table', 'Column', 'Declared type', 'Affinity', 'Rowid verdict'].forEach(function (h) {
+    var th = el('th', null, h);
+    th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  pks.forEach(function (e) {
+    var c = e.col, tr = document.createElement('tr');
+    if (c.rowid.state === 'alias') tr.className = 'flagged';
+    tr.appendChild(el('td', 'mono', e.table.name));
+    tr.appendChild(el('td', 'mono', c.name));
+    tr.appendChild(el('td', 'wrapcell mono', c.declaredType === '' ? '(no type specified)' : c.declaredType));
+    tr.appendChild(affCell(c));
+    var tdV = el('td', 'wrapcell');
+    var lab = el('span', c.rowid.state === 'alias' ? 'flag' : 'no-flag');
+    if (c.rowid.state === 'alias') {
+      lab.appendChild(el('span', 'glyph', '[=] '));
+    }
+    lab.appendChild(document.createTextNode(c.rowid.label));
+    tdV.appendChild(lab);
+    if (c.rowid.detail) tdV.appendChild(el('div', 'hint', c.rowid.detail));
+    tr.appendChild(tdV);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  s.appendChild(wrap);
+  s.appendChild(el('p', 'hint', 'The test this page applies: the declared type, trimmed, with one enclosing pair of quotes removed the way SQLite removes them, and uppercased, is exactly INTEGER, the column carries PRIMARY KEY on its own rather than as part of a composite key, the table is not WITHOUT ROWID, and the column definition does not end its PRIMARY KEY clause with DESC. That last condition is a quirk with no rule behind it: PRIMARY KEY DESC written on the column is not the rowid, while the table level PRIMARY KEY(k DESC) is.'));
+  return s;
+}
+
+function render() {
+  var out = document.getElementById('results');
+  while (out.firstChild) out.removeChild(out.firstChild);
+
+  var ddl = document.getElementById('ddl').value;
+  var probes = document.getElementById('probes').value;
+
+  if (asciiTrim(ddl) === '') {
+    var calm = panel('empty-h', 'Nothing to audit yet');
+    calm.appendChild(el('p', 'calm', 'Paste a CREATE TABLE statement to see per-column affinity verdicts.'));
+    var b = el('button', null, 'Reset to example');
+    b.type = 'button';
+    b.addEventListener('click', resetExample);
+    var row = el('div', 'controls');
+    row.appendChild(b);
+    calm.appendChild(row);
+    out.appendChild(calm);
+    return;
+  }
+
+  var model;
+  try {
+    model = analyse(ddl, probes);
+  } catch (e) {
+    out.appendChild(errorBox(
+      'Could not parse the column list, check for an unclosed parenthesis or quote',
+      (e && e.message) ? e.message : String(e),
+      ddl.slice(0, 120)));
+    return;
+  }
+
+  var i;
+  for (i = 0; i < model.errors.length; i++) {
+    out.appendChild(errorBox(model.errors[i].title, model.errors[i].body, ''));
+  }
+  if (model.errors.length) return;
+
+  if (model.tables.length === 0) {
+    var looksLike = /^\s*(SELECT|INSERT|UPDATE|DELETE|WITH)\b/i.exec(asciiTrim(ddl));
+    out.appendChild(errorBox(
+      'No CREATE TABLE statement found. This tool reads DDL, not queries. Paste a CREATE TABLE.',
+      looksLike ? ('That looks like a ' + looksLike[1].toUpperCase() + ' statement. Affinity is a property of a column declaration, so there is nothing here to read.') : '',
+      ''));
+    return;
+  }
+
+  var shown = 0, broken = 0;
+  for (i = 0; i < model.tables.length; i++) {
+    if (!model.tables[i].error) continue;
+    broken++;
+    if (shown < 20) {
+      out.appendChild(errorBox(model.tables[i].error.title, model.tables[i].error.body, model.tables[i].error.echo));
+      shown++;
+    }
+  }
+  if (broken > shown) {
+    out.appendChild(errorBox((broken - shown) + ' more statements failed to parse.',
+      'Only the first 20 refusals are listed, so a very large paste cannot flood the page.', ''));
+  }
+
+  var cols = allColumns(model);
+  if (cols.length === 0) {
+    out.appendChild(errorBox('No column definitions were found inside the statement.',
+      'Every item in the column list parsed as a table level constraint rather than a column.', ''));
+    return;
+  }
+
+  out.appendChild(renderPanel1(model, cols));
+  out.appendChild(renderPanel2(model, cols));
+  out.appendChild(renderPanel3(model, cols));
+  out.appendChild(renderPanel4(model, cols));
+}
+
+function renderSelfTest() {
+  var panelEl = document.getElementById('selftest-panel');
+  var box = document.getElementById('selftest-out');
+  while (box.firstChild) box.removeChild(box.firstChild);
+  panelEl.hidden = false;
+
+  var r = runSelfTest();
+  var summary = el('p', 'selftest-summary');
+  summary.appendChild(document.createTextNode(
+    r.passed + ' of ' + r.total + ' assertions passed, ' + r.failed + ' failed. '));
+  if (r.controlOk) {
+    summary.appendChild(el('span', 'good', 'Exactly one failure, the positive control. The run completed.'));
+  } else {
+    summary.appendChild(el('span', 'bad', 'Expected exactly one failure, the positive control. Something else is wrong.'));
+  }
+  box.appendChild(summary);
+  box.appendChild(el('p', 'hint', 'The positive control is an assertion written to fail on purpose. A self test that reports zero failures has stopped running before the end, and everything it claimed above that point is worthless.'));
+
+  var wrap = el('div', 'tablewrap');
+  var tbl = document.createElement('table');
+  tbl.appendChild(el('caption', null, 'Every assertion that did not pass.'));
+  var thead = document.createElement('thead');
+  var hr = document.createElement('tr');
+  ['Group', 'Assertion', 'Got', 'Expected'].forEach(function (h) {
+    var th = el('th', null, h);
+    th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  r.results.forEach(function (x) {
+    if (x.ok) return;
+    var tr = document.createElement('tr');
+    tr.appendChild(el('td', null, x.group));
+    tr.appendChild(el('td', 'wrapcell', x.name));
+    tr.appendChild(el('td', 'wrapcell mono', x.actual));
+    tr.appendChild(el('td', 'wrapcell mono', x.expected));
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  box.appendChild(wrap);
+
+  var counts = {};
+  r.results.forEach(function (x) { counts[x.group] = (counts[x.group] || 0) + 1; });
+  var groups = [];
+  for (var k in counts) if (Object.prototype.hasOwnProperty.call(counts, k)) groups.push(k + ' ' + counts[k]);
+  box.appendChild(el('p', 'hint', 'Assertions by group: ' + groups.join(', ') + '.'));
+}
+
+function resetExample() {
+  document.getElementById('ddl').value = EXAMPLE_DDL;
+  document.getElementById('probes').value = EXAMPLE_PROBES;
+  render();
+}
+
+var debounce = null;
+function scheduleRender() {
+  if (debounce !== null) clearTimeout(debounce);
+  debounce = setTimeout(function () { debounce = null; render(); }, 150);
+}
+
+function applyTheme(dark) {
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  var btn = document.getElementById('theme');
+  btn.setAttribute('aria-pressed', dark ? 'true' : 'false');
+  btn.textContent = dark ? 'Light theme' : 'Dark theme';
+}
+
+document.getElementById('ddl').addEventListener('input', scheduleRender);
+document.getElementById('probes').addEventListener('input', scheduleRender);
+document.getElementById('reset').addEventListener('click', resetExample);
+document.getElementById('selftest').addEventListener('click', renderSelfTest);
+document.getElementById('theme').addEventListener('click', function () {
+  applyTheme(document.documentElement.getAttribute('data-theme') !== 'dark');
+});
+
+(function initTheme() {
+  var dark = false;
+  if (global.matchMedia) {
+    try { dark = global.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { dark = false; }
+  }
+  applyTheme(dark);
+})();
+
+resetExample();
+
+}(this));
+</script>
+</body>
+</html>
