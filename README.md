@@ -235,7 +235,7 @@ Everything measured here used SQLite 3.50.4.
 
 ## License
 
-MIT. Copyright (c) 2026 0xelitesystem. See `LICENSE`.
+MIT. Copyright (c) 2026 RBL Industries LLC. See `LICENSE`.
 
 ## Related
 
