@@ -241,4 +241,4 @@ MIT. Copyright (c) 2026 RBL Industries LLC. See `LICENSE`.
 
 - https://github.com/0xelitesystem/json-precision-auditor
 - https://github.com/0xelitesystem/yaml-type-coercion-auditor
-- https://github.com/0xelitesystem/jwt-inspector
+- https://github.com/0xelitesystem/jwt-verify-in-browser
